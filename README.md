@@ -11,3 +11,7 @@ Rotation with Dr. Adam Palmer
 ### 2020-02-10
 
 1. Stand-alone program for predicting combination therapy effect.
+
+### 2020-02-12
+
+1. Added median PFS line to plot function

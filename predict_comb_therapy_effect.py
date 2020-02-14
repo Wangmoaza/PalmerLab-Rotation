@@ -15,7 +15,7 @@ def import_survival_data(filepath):
 
 def _comb_prob(p_high, p_low, rho):
     # When P(A) > P(B)
-    # P(A+B) = P(A) + (1-P(A)) * P(B) * rho
+    # P(A+B) = P(A) + (1-P(A)) * P(B) * (1-rho)
     return (p_high + ((1 - p_high) * p_low * (1 - rho))) * 100
 
 
@@ -25,8 +25,8 @@ def combined_prob(f_a, f_b, timecourse, rho=0.3):
     return _comb_prob(np.fmax(prob_a, prob_b), np.fmin(prob_a, prob_b), rho)
 
 
-def interpolate(df, kind='linear'):
-    return interp1d(df['Time'], df['Survival'], kind=kind, fill_value='extrapolate')
+def interpolate(df, x='Time', y='Survival', kind='linear'):
+    return interp1d(df[x], df[y], kind=kind, fill_value='extrapolate')
 
 
 def parse_input(filepath):
@@ -39,7 +39,15 @@ def parse_input(filepath):
 
 
 def adjust_response(df, time, response):
-    """ Adjust response to make survival at {time} to {response} survival. """
+    """ Adjust response to make survival at {time} to {response} survival.
+    Args:
+        df (pd.DataFrame): survival data frame
+        time (float):
+        response (float):
+
+    Returns:
+        df (pd.DataFrame): updated survival data frame
+    """
     # add pseudo point with survival (end time, 0) for scaling purposes
     df.index = df.index + 1
     df.loc[0, :] = [df.at[1, 'Time'], 0]
@@ -60,6 +68,24 @@ def adjust_response(df, time, response):
     df = df.drop(index=0)
     df.index = df.index - 1
     return df
+
+
+def median_pfs(df_list, ax):
+    """ Plots dashed lines for median PFS.
+    Args:
+        df_list (list): list of survival data frames
+        ax (matplotlib.axes.Axes): axis to plot
+    """
+    med_pfs_list = []
+    # calculate median PFS
+    for df in df_list:
+        inv_f = interpolate(df, x='Survival', y='Time')
+        med_pfs_list.append(inv_f(50))
+
+    ax.hlines(50, 0, max(med_pfs_list), linestyle='--', linewidth=1)
+
+    for med_pfs in med_pfs_list:
+         ax.vlines(med_pfs, 50, 0, linestyle='--', linewidth=1)
 
 
 def main():
@@ -125,11 +151,12 @@ def main():
                     combined_prob(f_a, f_b, timepoints, rho=args.min_rho),
                     combined_prob(f_a, f_b, timepoints, rho=args.max_rho),
                     alpha=0.3, color='gray')
+    median_pfs([df_a, df_b, df_ab, predicted], ax)
     ax.set_xlim(0)
     ax.set_ylim(0)
     ax.set_xlabel("Time (months)")
     ax.set_ylabel('Survival (%)')
-
+    fig.tight_layout()
     # save output figure
     if args.out_prefix is None:
         fig.savefig('./{0}_{1}_combination_kmplot.pdf'.format(name_a, name_b))
