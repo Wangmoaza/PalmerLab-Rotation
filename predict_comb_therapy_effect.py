@@ -13,22 +13,6 @@ def import_survival_data(filepath):
     return df
 
 
-def _comb_prob(p_high, p_low, rho):
-    # When P(A) > P(B)
-    # P(A+B) = P(A) + (1-P(A)) * P(B) * (1-rho)
-    return (p_high + ((1 - p_high) * p_low * (1 - rho))) * 100
-
-
-def combined_prob(f_a, f_b, timecourse, rho=0.3):
-    # convert percentage to decimals
-    prob_a, prob_b = f_a(timecourse) / 100, f_b(timecourse) / 100
-    return _comb_prob(np.fmax(prob_a, prob_b), np.fmin(prob_a, prob_b), rho)
-
-
-def interpolate(df, x='Time', y='Survival', kind='linear'):
-    return interp1d(df[x], df[y], kind=kind, fill_value='extrapolate')
-
-
 def parse_input(filepath):
     ls = []
     with open(filepath) as f:
@@ -36,6 +20,33 @@ def parse_input(filepath):
             tokens = line.strip().split(',')
             ls.append((tokens[0], import_survival_data(tokens[1])))
     return ls
+
+
+def _comb_prob_theor(p_high, p_low, rho):
+    """ Theoretical approcach """
+    # When P(A) > P(B)
+    # P(A+B) = P(A) + (1-P(A)) * P(B) * (1-rho)
+    return (p_high + ((1 - p_high) * p_low * (1 - rho))) * 100
+
+
+def _comb_prob_empiri():
+    """ Empirical approach (sampling) """
+    #TODO implement
+    return
+
+
+def combined_prob(df_a, df_b, timecourse, rho=0.3):
+    # interpolate
+    f_a = interpolate(df_a)
+    f_b = interpolate(df_b)
+    # convert percentage to decimals
+    prob_a, prob_b = f_a(timecourse) / 100, f_b(timecourse) / 100
+    #TODO implement use of thoer and empiri
+    return _comb_prob_theor(np.fmax(prob_a, prob_b), np.fmin(prob_a, prob_b), rho)
+
+
+def interpolate(df, x='Time', y='Survival', kind='linear'):
+    return interp1d(df[x], df[y], kind=kind, fill_value='extrapolate')
 
 
 def adjust_response(df, time, response):
@@ -54,7 +65,6 @@ def adjust_response(df, time, response):
     df = df.sort_index()
 
     cutoff_idx = df[df['Time'] < time]['Survival'].idxmin()
-    # This does not make a copy. This operation will change the original data frame.
     res = df.loc[:cutoff_idx, :].copy()
     nonres = df.loc[cutoff_idx:, :].copy()
     res.loc[:, 'Survival'] = np.interp(res['Survival'],
@@ -124,16 +134,13 @@ def main():
     if args.adj_respB:
         df_b = adjust_response(df_b, args.adj_respB[0], args.adj_respB[1])
 
-    # interpolate
-    f_a = interpolate(df_a)
-    f_b = interpolate(df_b)
 
     # predict
     timepoints = np.arange(
         0, int(min(df_a['Time'].max(), df_b['Time'].max())), 0.01)
 
     predicted = pd.DataFrame({"Time": timepoints,
-                              "Survival": combined_prob(f_a, f_b, timepoints,
+                              "Survival": combined_prob(df_a, df_b, timepoints,
                                                         rho=(args.min_rho + args.max_rho) / 2)})
 
     # plot survival curve
@@ -148,8 +155,8 @@ def main():
     sns.lineplot(x='Time', y='Survival', data=predicted,
                  color='black', label='Combination Predicted', ax=ax)
     ax.fill_between(timepoints,
-                    combined_prob(f_a, f_b, timepoints, rho=args.min_rho),
-                    combined_prob(f_a, f_b, timepoints, rho=args.max_rho),
+                    combined_prob(df_a, df_b, timepoints, rho=args.min_rho),
+                    combined_prob(df_a, df_b, timepoints, rho=args.max_rho),
                     alpha=0.3, color='gray')
     median_pfs([df_a, df_b, df_ab, predicted], ax)
     ax.set_xlim(0)
