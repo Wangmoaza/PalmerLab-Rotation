@@ -1,19 +1,44 @@
 import pandas as pd
 import numpy as np
 from scipy.interpolate import interp1d
+from scipy.stats import spearmanr, linregress, pearsonr, rankdata
 import matplotlib.pyplot as plt
 import seaborn as sns
 import argparse
 
 
 def import_survival_data(filepath):
-    df = pd.read_csv(filepath, sep=',', header=0, names=['Time', 'Survival'])
-    df.loc[:, 'Survival'] = df['Survival']
+    """ Import survival data either having two columns (time, survival) or one
+    column (time)
+
+    Args:
+        filepath (str): path to survival data file
+
+    Returns:
+        pd.DataFrame: returned data frame
+    """
+    with open(filepath, 'r') as f:
+        cols = len(f.readline().split(','))
+    if cols == 2:
+        df = pd.read_csv(filepath, sep=',', header=0, names=['Time', 'Survival'])
+    elif cols == 1:
+        #TODO remove repeating points at the end of the tail
+        df = pd.read_csv(filepath, sep=',', header=None, names=['Time'])
+        df.loc[:, 'Survival'] = np.linspace(0, 100, num=df.shape[0])
+
     df = df.drop_duplicates()
     return df
 
 
 def parse_input(filepath):
+    """ Parse input file containing names and file paths
+
+    Args:
+        filepath (str): path to input file
+
+    Returns:
+        list: list containing name and file paths
+    """
     ls = []
     with open(filepath) as f:
         for line in f.readlines():
@@ -70,7 +95,6 @@ def _comb_prob_theor(p_high, p_low, rho):
         np.ndarray: 1-D array of predicted survival (%) at each timepoint for
                     combination therapy
     """
-
     return (p_high + ((1 - p_high) * p_low * (1 - rho))) * 100
 
 
@@ -93,12 +117,11 @@ def combined_prob(df_a, df_b, timecourse, rho=0.3):
     f_b = interpolate(df_b, x='Time', y='Survival')
     # convert percentage to decimals
     prob_a, prob_b = f_a(timecourse) / 100, f_b(timecourse) / 100
-    # TODO implement use of thoer and empiri
     return _comb_prob_theor(np.fmax(prob_a, prob_b), np.fmin(prob_a, prob_b), rho)
 
 
 def sample_indep_response(df, patients, n=2000):
-    """ Randomly sample PFS response for n-patients.
+    """ Randomly sample PFS response (time) for n-patients.
 
     Args:
         df (pd.DataFrame): survival data
@@ -106,7 +129,7 @@ def sample_indep_response(df, patients, n=2000):
         patients (np.ndarray): 1-D array of n-patients from in 0-100 scale.
 
     Returns:
-        np.ndarray: 1-D array of randomly sampled PFS for n-patients
+        np.ndarray: 1-D array of randomly sampled PFS time for n-patients
     """
     rand_idx = np.random.permutation(n)
     f = interpolate(df, x='Survival', y='Time')
@@ -114,9 +137,9 @@ def sample_indep_response(df, patients, n=2000):
     return survive_time[rand_idx]
 
 
-def fit_rho(n, size, desired_rho):
-    """ Shuffle index of 1 data to make two datasets to have derised  spearmen correlation
-    coefficient
+def fit_rho(n, desired_rho, size=200):
+    """ Shuffle index of one data to make two datasets to have desired spearmen
+    correlation coefficient (random sampling version)
     Args:
         n (int): number of data points
         size (int): generate random integer [0, size) to shuffle index
@@ -125,20 +148,44 @@ def fit_rho(n, size, desired_rho):
     Returns:
         np.ndarray: shuffled index
     """
-    permit = 0.001
+    if size < 0:
+        size += 10
+
+    permit = 0.005
     shuffled = [i + np.random.randint(size) for i in range(n)]
     rho, _ = spearmanr(range(n), shuffled)
     if rho < desired_rho - permit:
-        return fit_rho(n, size - 5, desired_rho)
+        return fit_rho(n, desired_rho, size - 5)
     elif rho > desired_rho + permit:
-        return fit_rho(n, size + 5, desired_rho)
+        return fit_rho(n, desired_rho, size + 5)
     else:
         return np.argsort(shuffled)
 
 
+def fit_rho2(n, rho):
+    """ Shuffle indices of two sorted dataset to make two datasets to have desired Spearman
+    correlation coefficient (copulas version)
+    Based on: https://stats.stackexchange.com/questions/15011/generate-a-random-variable-with-a-defined-correlation-to-an-existing-variables/313138#313138
+
+    Args:
+        n (int): number of data points
+        rho (float): desired spearman correlation coefficient
+
+    Returns:
+        tuple: tuple of shuffled indices (np.ndarray)
+    """
+    rho_p = 2 * np.sin(rho * np.pi / 6)  # convert to pearson's corr coef
+    x = np.random.permutation(n)
+    y = np.random.permutation(n)
+    result = linregress(x, y)
+    residuals = y - (result[0] * x + result[1])
+    new_y = rho_p * np.std(residuals) * x + np.sqrt(1 - rho_p**2) * np.std(x) * residuals
+    return ((rankdata(x) - 1).astype(int), (rankdata(new_y) - 1).astype(int))
+
+
 def sample_joint_response(ori_a, ori_b, patients, rho=0, n=2000):
-    """ Calculate predicted PFS for n-patients in combination therapy based on
-    sampling approach.
+    """ Calculate predicted PFS time for n-patients in combination therapy based
+    on sampling approach.
 
     Args:
         ori_a (pd.DataFrame): survival data for treatment A
@@ -150,16 +197,16 @@ def sample_joint_response(ori_a, ori_b, patients, rho=0, n=2000):
     Returns:
         list: list of predicted PFS for n-patients in combination therapy
     """
-    df_a = add_pseudo_point(ori_a)
-    df_b = add_pseudo_point(ori_b)
+    df_a, df_b = ori_a, ori_b
     if rho == 0:
         return sorted(np.maximum(sample_indep_response(df_a, patients, n=n),
                                  sample_indep_response(df_b, patients, n=n)), reverse=True)
     else:
         fa = interpolate(df_a, x='Survival', y='Time')
         fb = interpolate(df_b, x='Survival', y='Time')
-        shuffled = fit_rho(n, 200, rho)
-        return sorted(np.maximum(fa(patients), fb(patients)[shuffled]), reverse=True)
+        #shuffled = fit_rho2(n, rho)
+        idx_a, idx_b = fit_rho2(n, rho)
+        return sorted(np.maximum(fa(patients)[idx_a], fb(patients)[idx_b]), reverse=True)
 
 
 def adjust_response(df, time, response):
@@ -232,6 +279,8 @@ def main():
                         help='File extension for output figure (default: pdf)')
     parser.add_argument('--predict-type', default='theor', choices=['theor', 'stoch'],
                         help='How to predict combination effect. Calculate by equation or stochastic sampling (default: theor)')
+    parser.add_argument('--N', type=int, default=5000,
+                        help='Number of data points to use in prediction (default: 5000)')
     args = parser.parse_args()
 
     # get input
@@ -247,7 +296,7 @@ def main():
         df_b = adjust_response(df_b, args.adj_respB[0], args.adj_respB[1])
 
     # predict combination effect
-    N = 2000
+    N = args.N
     if args.predict_type == 'theor':
         timepoints = np.linspace(
             0, min(df_a['Time'].max(), df_b['Time'].max()), num=N)
@@ -256,12 +305,10 @@ def main():
                                   "Survival": combined_prob(df_a, df_b, timepoints,
                                                             rho=(args.min_rho + args.max_rho) / 2)})
     else:  # stoch
-        patients = np.linspace(
-            max(ori_a['Survival'].min(), ori_b['Survival'].min()), 99, num=N)
+        patients = np.linspace(0, 100, num=N)
         predicted = pd.DataFrame({'Survival': patients,
                                   'Time': sample_joint_response(df_a, df_b, patients, n=N,
                                                                 rho=(args.min_rho + args.max_rho) / 2)})
-
     # plot survival curve
     fig, ax=plt.subplots(figsize = (args.fig_width, args.fig_height))
     sns.despine()
@@ -288,8 +335,8 @@ def main():
                              df_a, df_b, patients, n=N, rho=args.max_rho),
                          alpha = 0.3, color = 'gray')
     median_pfs([df_a, df_b, df_ab, predicted], ax)
-    ax.set_xlim(0)
-    ax.set_ylim(0)
+    ax.set_xlim(0, max([df_a['Time'].max(), df_b['Time'].max(), df_ab['Time'].max()]) + 1)
+    ax.set_ylim(0, 105)
     ax.set_xlabel("Time (months)")
     ax.set_ylabel('Survival (%)')
     fig.tight_layout()

@@ -1,0 +1,3 @@
+Nivolumab,../analysis/merged_data/melanoma/melanomaNIVO.csv
+Ipilimumab,../analysis/merged_data/melanoma/melanomaIPI.csv
+Combination,../analysis/merged_data/melanoma/melanomaCOMBO.csv
