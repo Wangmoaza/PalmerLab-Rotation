@@ -33,7 +33,7 @@
 
 1.  Fixed bug in sampling version
 
-    1.  np.argsort wasn't what I expected it to do (ranking) -> changed it to scipy.stats.rankdata
+    1.  np.argsort wasn't doing what I expected it to do (ranking) -> changed it to scipy.stats.rankdata
     2.  need to put patient 0 - 100 not max(min(data1), min(data2)) when generating joint distribution
 
 2.  Copulas equation
@@ -50,3 +50,9 @@
    - adjusted survival at time point: 60, 70, 80, 90
    - N: 50,000
    - method: equation, sampling
+
+### 2020-03-03
+
+1. ClonTracer
+   - run clontracer barcode analysis on experiment-level
+   - excluded bad sample GW061
