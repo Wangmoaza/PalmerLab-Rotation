@@ -20,9 +20,14 @@ def import_survival_data(filepath):
     with open(filepath, 'r') as f:
         cols = len(f.readline().split(','))
     if cols == 2:
-        df = pd.read_csv(filepath, sep=',', header=0, names=['Time', 'Survival'])
+        df = pd.read_csv(filepath, sep=',', header=0,
+                         names=['Time', 'Survival'])
+        # if survival is in 0-1 scale, convert to 0-100
+        if df['Survival'].max() <= 1.1:
+            df.loc[:, 'Survival'] = df['Survival'] * 100
+
     elif cols == 1:
-        #TODO remove repeating points at the end of the tail
+        # TODO remove repeating points at the end of the tail
         df = pd.read_csv(filepath, sep=',', header=None, names=['Time'])
         df.loc[:, 'Survival'] = np.linspace(0, 100, num=df.shape[0])
 
@@ -179,7 +184,8 @@ def fit_rho2(n, rho):
     y = np.random.permutation(n)
     result = linregress(x, y)
     residuals = y - (result[0] * x + result[1])
-    new_y = rho_p * np.std(residuals) * x + np.sqrt(1 - rho_p**2) * np.std(x) * residuals
+    new_y = rho_p * np.std(residuals) * x + \
+        np.sqrt(1 - rho_p**2) * np.std(x) * residuals
     return ((rankdata(x) - 1).astype(int), (rankdata(new_y) - 1).astype(int))
 
 
@@ -252,7 +258,7 @@ def median_pfs(df_list, ax):
     ax.hlines(50, 0, max(med_pfs_list), linestyle='--', linewidth=1)
 
     for med_pfs in med_pfs_list:
-         ax.vlines(med_pfs, 50, 0, linestyle='--', linewidth=1)
+        ax.vlines(med_pfs, 50, 0, linestyle='--', linewidth=1)
 
 
 def main():
@@ -281,14 +287,22 @@ def main():
                         help='How to predict combination effect. Calculate by equation or stochastic sampling (default: theor)')
     parser.add_argument('--N', type=int, default=5000,
                         help='Number of data points to use in prediction (default: 5000)')
+    parser.add_argument('--out-table', action='store_true',
+                        help='Create table of prediction values.')
     args = parser.parse_args()
 
     # get input
     treatments = parse_input(args.input)
 
+    # TODO: add assert to check for input
     name_a, df_a = treatments[0]
     name_b, df_b = treatments[1]
-    name_ab, df_ab = treatments[2]
+
+    # check combination data exists
+    comb_data_exists = False
+    if len(treatments) == 3:
+        comb_data_exists = True
+        name_ab, df_ab = treatments[2]
 
     if args.adj_respA:
         df_a = adjust_response(df_a, args.adj_respA[0], args.adj_respA[1])
@@ -310,32 +324,39 @@ def main():
                                   'Time': sample_joint_response(df_a, df_b, patients, n=N,
                                                                 rho=(args.min_rho + args.max_rho) / 2)})
     # plot survival curve
-    fig, ax=plt.subplots(figsize = (args.fig_width, args.fig_height))
+    fig, ax = plt.subplots(figsize=(args.fig_width, args.fig_height))
     sns.despine()
-    sns.lineplot(x = 'Time', y = 'Survival', data = df_a,
-                 label = name_a, ax = ax)
-    sns.lineplot(x = 'Time', y = 'Survival', data = df_b,
-                 label = name_b, ax = ax)
-    sns.lineplot(x = 'Time', y = 'Survival', data = df_ab,
-                 label = name_ab, ax = ax)
-    sns.lineplot(x = 'Time', y = 'Survival', data = predicted,
-                 color = 'black', label = 'Combination Predicted', ax = ax)
+    sns.lineplot(x='Time', y='Survival', data=df_a,
+                 label=name_a, ax=ax)
+    sns.lineplot(x='Time', y='Survival', data=df_b,
+                 label=name_b, ax=ax)
+    if comb_data_exists:
+        sns.lineplot(x='Time', y='Survival', data=df_ab,
+                     label=name_ab, ax=ax)
+    sns.lineplot(x='Time', y='Survival', data=predicted,
+                 color='black', label='Combination Predicted', ax=ax)
     if args.predict_type == 'theor':
         ax.fill_between(timepoints,
                         combined_prob(df_a, df_b, timepoints,
                                       rho=args.min_rho),
                         combined_prob(df_a, df_b, timepoints,
                                       rho=args.max_rho),
-                        alpha = 0.3, color = 'gray')
+                        alpha=0.3, color='gray')
     else:
         ax.fill_betweenx(patients,
                          sample_joint_response(
                              df_a, df_b, patients, n=N, rho=args.min_rho),
                          sample_joint_response(
                              df_a, df_b, patients, n=N, rho=args.max_rho),
-                         alpha = 0.3, color = 'gray')
-    median_pfs([df_a, df_b, df_ab, predicted], ax)
-    ax.set_xlim(0, max([df_a['Time'].max(), df_b['Time'].max(), df_ab['Time'].max()]) + 1)
+                         alpha=0.3, color='gray')
+    if comb_data_exists:
+        median_pfs([df_a, df_b, df_ab, predicted], ax)
+        ax.set_xlim(
+            0, max([df_a['Time'].max(), df_b['Time'].max(), df_ab['Time'].max()]) + 1)
+    else:
+        median_pfs([df_a, df_b, predicted], ax)
+        ax.set_xlim(
+            0, max([df_a['Time'].max(), df_b['Time'].max()]) + 1)
     ax.set_ylim(0, 105)
     ax.set_xlabel("Time (months)")
     ax.set_ylabel('Survival (%)')
@@ -345,6 +366,13 @@ def main():
         fig.savefig('./{0}_{1}_combination_kmplot.pdf'.format(name_a, name_b))
     else:
         fig.savefig(args.out_prefix + '.' + args.extension)
+
+    # save output table
+    if args.out_table:
+        if args.out_prefix is None:
+            predicted.to_csv('./{0}_{1}_combination_predicted.csv'.format(name_a, name_b), index=False)
+        else:
+            predicted.to_csv(args.out_prefix + '.csv', index=False)
 
 
 if __name__ == '__main__':
