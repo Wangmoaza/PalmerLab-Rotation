@@ -275,10 +275,8 @@ def main():
                         help='Adjust resposne of treatment A to (survival) at (time). Should be in the format: --adj-respA time survival')
     parser.add_argument('--adj-respB', nargs=2, type=float,
                         help='Adjust resposne of treatment B to (survival) at (time). Should be in the format: --adj-respB time survival')
-    parser.add_argument('--fig-height', type=int, default=5,
-                        help='Output figure height (default: 5)')
-    parser.add_argument('--fig-width', type=int, default=10,
-                        help='Output figure width (default: 10)')
+    parser.add_argument('--figsize', nargs=2, type=int, default=[6, 4],
+                        help='Output figure width and height (default: (6, 4))')
     parser.add_argument(
         '--out-prefix', help='Output file prefix. If not specified, it will be the names of the drugs.')
     parser.add_argument('--extension', default='pdf', choices=['pdf', 'png', 'jpg'],
@@ -289,6 +287,8 @@ def main():
                         help='Number of data points to use in prediction (default: 5000)')
     parser.add_argument('--out-table', action='store_true',
                         help='Create table of prediction values.')
+    parser.add_argument('--time-max', type=int, default=None,
+                        help='Figure follow-up time max')
     args = parser.parse_args()
 
     # get input
@@ -324,7 +324,7 @@ def main():
                                   'Time': sample_joint_response(df_a, df_b, patients, n=N,
                                                                 rho=(args.min_rho + args.max_rho) / 2)})
     # plot survival curve
-    fig, ax = plt.subplots(figsize=(args.fig_width, args.fig_height))
+    fig, ax = plt.subplots(figsize=(tuple(args.figsize)))
     sns.despine()
     sns.lineplot(x='Time', y='Survival', data=df_a,
                  label=name_a, ax=ax)
@@ -349,18 +349,26 @@ def main():
                          sample_joint_response(
                              df_a, df_b, patients, n=N, rho=args.max_rho),
                          alpha=0.3, color='gray')
+
+    # set time limit on figure
+    time_max = args.time_max
     if comb_data_exists:
         median_pfs([df_a, df_b, df_ab, predicted], ax)
-        ax.set_xlim(
-            0, max([df_a['Time'].max(), df_b['Time'].max(), df_ab['Time'].max()]) + 1)
+        if time_max is None:
+            time_max = max([df_a['Time'].max(), df_b['Time'].max(), df_ab['Time'].max()]) + 1
     else:
         median_pfs([df_a, df_b, predicted], ax)
-        ax.set_xlim(
-            0, max([df_a['Time'].max(), df_b['Time'].max()]) + 1)
+        if time_max is None:
+            time_max = max([df_a['Time'].max(), df_b['Time'].max()]) + 1
+
     ax.set_ylim(0, 105)
-    ax.set_xlabel("Time (months)")
-    ax.set_ylabel('Survival (%)')
+    ax.set_xlim(0, time_max)
+
+    ax.set_xticks(np.arange(0, time_max, step=3))
+    ax.set_xlabel("Months")
+    ax.set_ylabel('Progression Free Survival (%)')
     fig.tight_layout()
+
     # save output figure
     if args.out_prefix is None:
         fig.savefig('./{0}_{1}_combination_kmplot.pdf'.format(name_a, name_b))
@@ -370,9 +378,9 @@ def main():
     # save output table
     if args.out_table:
         if args.out_prefix is None:
-            predicted.to_csv('./{0}_{1}_combination_predicted.csv'.format(name_a, name_b), index=False)
+            predicted.round(5).to_csv('./{0}_{1}_combination_predicted.csv'.format(name_a, name_b), index=False)
         else:
-            predicted.to_csv(args.out_prefix + '.csv', index=False)
+            predicted.round(5).to_csv(args.out_prefix + '.csv', index=False)
 
 
 if __name__ == '__main__':
